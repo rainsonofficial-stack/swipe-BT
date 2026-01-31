@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <meta name="theme-color" content="#000000">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>AOD Magic</title>
+    <link rel="manifest" href="manifest.json">
+    <style>
+        body, html {
+            background-color: #000000;
+            color: #d1d1d1;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            height: 100vh;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+        }
+
+        .hidden-ui {
+            opacity: 0 !important;
+            pointer-events: none; 
+        }
+
+        #phone-trigger {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 120px;
+            height: 120px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto !important; 
+            z-index: 999;
+        }
+
+        #camera-trigger {
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            width: 100px;
+            height: 100px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto !important; 
+            z-index: 999;
+        }
+
+        #top-container {
+            margin-top: 18vh;
+            text-align: center;
+            transition: opacity 0.2s ease;
+        }
+
+        #time-display {
+            font-size: 6.2rem;
+            font-weight: 400;
+            color: #ffffff;
+            line-height: 1;
+            letter-spacing: -1px;
+        }
+
+        #date-display {
+            font-size: 1.2rem;
+            margin-top: 5px;
+            color: #8e8e8e;
+            font-weight: 400;
+        }
+
+        #bottom-container {
+            position: relative;
+            height: 120px;
+            width: 100%;
+            transition: opacity 0.2s ease;
+        }
+
+        .icon-svg {
+            width: 30px;
+            height: 30px;
+            fill: white;
+            opacity: 0.7;
+        }
+
+        #debug-text {
+            position: absolute;
+            right: 40px;
+            bottom: 110px;
+            font-size: 0.8rem;
+            color: #f0f0f0;
+            font-family: monospace;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body id="main-body">
+
+    <div id="top-container">
+        <div id="time-display">12:00</div>
+        <div id="date-display">Mon, Jan 1</div>
+    </div>
+
+    <div id="debug-text"></div>
+
+    <div id="bottom-container">
+        <div id="phone-trigger">
+            <svg class="icon-svg" viewBox="0 0 24 24"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg>
+        </div>
+        
+        <div id="camera-trigger">
+            <svg class="icon-svg" viewBox="0 0 24 24"><path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/></svg>
+        </div>
+    </div>
+
+    <script>
+        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzaWscSTTbL_9w_iS12oO1oi0h7umBcpYJRBmrVpWZzKT6lvB1SQCOKsZWpOSeexWOlhA/exec"; 
+        
+        let collectedCode = "";
+        let lastSentCode = "none";
+        let swipeBuffer = null;
+        let startX = null;
+        let startY = null;
+        let longPressTimer = null;
+        let swipeTriggered = false;
+        let isStealth = false;
+        
+        let lastTapTime = 0;
+        let tapCount = 0; 
+
+        function updateTime() {
+            const now = new Date();
+            let hours = now.getHours();
+            hours = hours % 12 || 12;
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            document.getElementById('time-display').innerText = `${hours}:${minutes}`;
+            document.getElementById('date-display').innerText = `${days[now.getDay()]}, ${months[now.getMonth()]} ${now.getDate()}`;
+        }
+        setInterval(updateTime, 1000);
+        updateTime();
+
+        let moveDetected = false;
+
+        document.addEventListener('touchstart', e => {
+            if (e.touches.length > 1) e.preventDefault(); 
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+            swipeTriggered = false;
+            moveDetected = false;
+            
+            const now = Date.now();
+            if (now - lastTapTime < 350) {
+                tapCount++;
+            } else {
+                tapCount = 1;
+            }
+            lastTapTime = now;
+
+            if (tapCount === 3) {
+                collectedCode = "";
+                swipeBuffer = null;
+                navigator.vibrate([40, 40, 40]);
+                tapCount = 0; 
+            }
+
+            longPressTimer = setTimeout(() => {
+                if (!swipeTriggered && !moveDetected) sendData();
+            }, 2000);
+        }, {passive: false});
+
+        document.addEventListener('touchmove', e => {
+            if (!startX || !startY || swipeTriggered) return;
+            let diffX = e.touches[0].clientX - startX;
+            let diffY = e.touches[0].clientY - startY;
+            if (Math.abs(diffX) > 10 || Math.abs(diffY) > 10) moveDetected = true;
+
+            const threshold = 15; 
+            if (Math.abs(diffX) > threshold || Math.abs(diffY) > threshold) {
+                let dir = Math.abs(diffX) > Math.abs(diffY) ? (diffX > 0 ? "R" : "L") : (diffY > 0 ? "D" : "U");
+                processDirection(dir);
+                swipeTriggered = true; 
+                if (longPressTimer) clearTimeout(longPressTimer);
+            }
+        }, {passive: false});
+
+        document.addEventListener('touchend', e => {
+            if (longPressTimer) clearTimeout(longPressTimer);
+            startX = null; startY = null;
+        });
+
+        let lastPhoneTap = 0;
+        let phoneTapCount = 0;
+        document.getElementById('phone-trigger').addEventListener('touchstart', (e) => {
+            e.stopPropagation();
+            const now = Date.now();
+            if (now - lastPhoneTap < 350) {
+                phoneTapCount++;
+            } else {
+                phoneTapCount = 1;
+            }
+            lastPhoneTap = now;
+
+            if (phoneTapCount === 2) {
+                toggleStealth();
+                phoneTapCount = 0;
+            }
+        });
+
+        function toggleStealth() {
+            isStealth = !isStealth;
+            document.getElementById('top-container').classList.toggle('hidden-ui');
+            document.getElementById('bottom-container').classList.toggle('hidden-ui');
+            navigator.vibrate(60);
+        }
+
+        let lastCamTap = 0;
+        let camTapCount = 0;
+        document.getElementById('camera-trigger').addEventListener('touchstart', (e) => {
+            e.stopPropagation();
+            if (isStealth) return;
+            const now = Date.now();
+            if (now - lastCamTap < 350) {
+                camTapCount++;
+            } else {
+                camTapCount = 1;
+            }
+            lastCamTap = now;
+
+            if (camTapCount === 2) {
+                document.getElementById('debug-text').innerText = collectedCode || `Last: ${lastSentCode}`;
+                setTimeout(() => { document.getElementById('debug-text').innerText = ""; }, 4000);
+                camTapCount = 0;
+            }
+        });
+
+        function processDirection(dir) {
+            if (!swipeBuffer) {
+                swipeBuffer = dir;
+            } else {
+                const pair = swipeBuffer + dir;
+                const map = {
+                    "UU":"0","UR":"1","RU":"2","RR":"3","RD":"4","DR":"5","DD":"6","DL":"7","LD":"8","LL":"9",
+                    "LU":":", "UL":"  "
+                };
+                if (map[pair] !== undefined) {
+                    collectedCode += map[pair];
+                    navigator.vibrate(80);
+                }
+                swipeBuffer = null;
+            }
+        }
+
+        function sendData() {
+            if (collectedCode.length === 0) return;
+            navigator.vibrate(800);
+            lastSentCode = collectedCode;
+            fetch(GOOGLE_SCRIPT_URL, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ code: collectedCode })
+            }).then(() => {
+                collectedCode = "";
+                document.getElementById('debug-text').innerText = "";
+            });
+        }
+
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js');
+        }
+    </script>
+
+    <!-- ============================
+         BLUETOOTH PRINTER ADD-ON
+         (NO EXISTING CODE MODIFIED)
+    ============================= -->
+    <script>
+        let bluetoothDevice = null;
+        let printerCharacteristic = null;
+
+        async function connectPrinter() {
+            try {
+                bluetoothDevice = await navigator.bluetooth.requestDevice({
+                    filters: [{ namePrefix: 'Printer' }],
+                    optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb']
+                });
+
+                const server = await bluetoothDevice.gatt.connect();
+                const service = await server.getPrimaryService(
+                    '000018f0-0000-1000-8000-00805f9b34fb'
+                );
+
+                printerCharacteristic = await service.getCharacteristic(
+                    '00002af1-0000-1000-8000-00805f9b34fb'
+                );
+
+                alert("Printer connected");
+            } catch (e) {
+                alert("Printer connection failed");
+            }
+        }
+
+        function printToBluetooth(text) {
+            if (!printerCharacteristic) return;
+            const encoder = new TextEncoder();
+            printerCharacteristic.writeValue(
+                encoder.encode(text + "\n\n\n")
+            );
+        }
+
+        const originalFetch = window.fetch;
+        window.fetch = function (...args) {
+            try {
+                if (
+                    typeof args[0] === "string" &&
+                    args[0].includes("script.google.com") &&
+                    args[1]?.body
+                ) {
+                    const data = JSON.parse(args[1].body);
+                    if (data.code) printToBluetooth(data.code);
+                }
+            } catch {}
+            return originalFetch.apply(this, args);
+        };
+    </script>
+
+</body>
+</html>
